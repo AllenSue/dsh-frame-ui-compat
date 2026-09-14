@@ -1,0 +1,10 @@
+/**
+ * Host loader entry for the browser-only compatibility layer.
+ *
+ * The Loader imports a plugin package on the Node side too, so this file must
+ * import nothing a host cannot resolve. The layer itself arrives through the
+ * client module system, which serves `./client` to the browser.
+ */
+
+/** Provides no host-side behavior. */
+export function apply(): void {}
