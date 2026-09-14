@@ -1,0 +1,21 @@
+{
+  "name": "@deepseek-ai/dsh-client-frames-ui-compat",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Compatibility layer: reproduces ui-layout's interfaces over the frame tree",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-frames-web",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ],
+      "platform": "web"
+    }
+  }
+}
