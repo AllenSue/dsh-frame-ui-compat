@@ -57,6 +57,8 @@ export function apply(ctx: {
   theme: { getTheme(): Parameters<ThemePresenter['apply']>[0] }
   on(event: 'theme/change', listener: (snapshot: Parameters<ThemePresenter['apply']>[0]) => void): () => void
   reflect: { provide(name: string, value: unknown): () => void }
+  /** Read a service another plugin published; `frames` arrives this way. */
+  get(name: string): unknown
 }): void {
   ctx.effect(() => {
     const frames = ctx.get('frames') as {
