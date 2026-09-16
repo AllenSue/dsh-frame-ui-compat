@@ -12,6 +12,7 @@
  */
 import { createLayoutFacade } from './facade.ts'
 import { LegacyRightbar, LegacySidebar } from './columns-body.ts'
+import { SIDEBAR_DEFAULT } from './columns.ts'
 import { ThemePresenter } from './theme-presenter.ts'
 
 /** Services this plugin needs before it activates. */
@@ -68,6 +69,7 @@ export function apply(ctx: {
       open(typeId: string): { ok: boolean }
       openContent(contentId: string, options?: { place?: string; beside?: string }): { ok: boolean }
       close(paneId: string): { ok: boolean }
+      focus(paneId: string): { ok: boolean }
       resizePane(paneId: string, fraction: number): { ok: boolean }
       activeTypeId(): string | undefined
       isOpen(typeId: string): boolean
@@ -84,7 +86,6 @@ export function apply(ctx: {
         }[]
       }
     }
-
     frames.registerType({ id: CONVERSATION_TYPE, title: () => 'Conversation' })
     frames.registerType({ id: SIDEBAR_TYPE, title: () => 'Navigation' })
     frames.registerType({ id: RIGHTBAR_TYPE, title: () => 'Right panel' })
@@ -130,6 +131,45 @@ export function apply(ctx: {
 
     const dropPanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo } })
     const dropService = ctx.reflect.provide('layout', facade)
+
+    // The sidebar goes up with the shell. `ui-sidebar` cannot put its own column
+    // there — it renders into a seat, and a seat needs a frame to be drawn in —
+    // so whoever owns the column types owns the opening. This is that: the
+    // composition, which is the only layer that knows these three types exist.
+    //
+    // The right column is deliberately *not* opened here. Whether it is shown is
+    // its occupant's recorded business, and it says so through `ctx.layout`; the
+    // shipped shell opened onto no right column either.
+    //
+    // The core default is still one frame. A profile that mounts no compatibility
+    // layer gets exactly that, which is what "one frame with nothing configured"
+    // has always meant.
+    const seedColumns = (): void => {
+      const centre = frames.project().docked
+        .find((pane) => pane.tabs.some((tab) => tab.typeId === CONVERSATION_TYPE))
+      const brought = frames.openContent(SIDEBAR_TYPE, { place: 'left' })
+      if (!brought.ok) return
+      const view = frames.project()
+      if (view.viewport === undefined) return
+      const column = view.docked.find((pane) => pane.tabs.some((tab) => tab.typeId === SIDEBAR_TYPE))
+      if (column !== undefined) frames.resizePane(column.id, SIDEBAR_DEFAULT / view.viewport.width)
+      // Opening a frame focuses it, which would leave the caret on the navigation
+      // column at boot. The shell opens onto its content, so focus goes back.
+      if (centre !== undefined) frames.focus(centre.id)
+    }
+
+    // Seeding needs the renderer's measurements, and the two plugins mount in an
+    // order this one does not control — so it tries, and keeps trying until the
+    // frame is measured, rather than assuming the renderer got there first.
+    let seeded = false
+    const trySeed = (): void => {
+      if (seeded) return
+      const before = frames.project().docked.length
+      seedColumns()
+      if (frames.project().docked.length > before) seeded = true
+    }
+    trySeed()
+    const offSeed = frames.subscribe(trySeed)
     // Three bodies, three seats. Each frame declares the seat it draws into and
     // nothing else — declaration is exclusive render authority, so two entries
     // naming `sidebar` would be two claimants for one seat.
@@ -158,6 +198,7 @@ export function apply(ctx: {
 
     return () => {
       offTheme()
+      offSeed()
       presenter.dispose()
       dropBridge()
       dropSidebar()
