@@ -17,7 +17,8 @@ function harness() {
   service.registerType(FILES)
   const facade = createLayoutFacade(service, {
     conversationTypeId: CONVERSATION.id,
-    isRegistered: (typeId) => typeId === CONVERSATION.id || typeId === FILES.id,
+    sidebarTypeId: 'legacy.sidebar',
+    rightbarTypeId: 'legacy.rightbar',
   })
   return { service, facade }
 }
