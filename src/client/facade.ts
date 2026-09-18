@@ -26,6 +26,7 @@
 import {
   clampWidth, isCollapsed, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
 } from './columns.ts'
+import type { Panels } from './panels.ts'
 
 /** One docked frame as the facade reads it. */
 export interface FacadePane {
@@ -41,8 +42,6 @@ export interface LayoutFrames {
   close(paneId: string): { ok: boolean }
   resizePane(paneId: string, fraction: number): { ok: boolean }
   activeTypeId(): string | undefined
-  /** Whether a plugin has declared this type; the core owns the registry. */
-  hasType(typeId: string): boolean
   /** The projection: where the frames are, and how big the area they fill is. */
   project(): {
     readonly viewport: { readonly width: number; readonly height: number } | undefined
@@ -52,12 +51,14 @@ export interface LayoutFrames {
 
 /** How the facade addresses the tree. */
 export interface LayoutFacadeOptions {
-  /** The type that plays the shell's centre: what "no panel selected" means. */
+  /** The type that plays the shell's centre. */
   conversationTypeId: string
   /** The type that plays the navigation column. */
   sidebarTypeId: string
   /** The type that plays the right column. */
   rightbarTypeId: string
+  /** Which panel the centre frame is showing. */
+  panels: Panels
 }
 
 /** The panel-navigation and geometry actions `ui-layout` exposed as `ctx.layout`. */
@@ -95,17 +96,11 @@ export function createLayoutFacade(frames: LayoutFrames, options: LayoutFacadeOp
   }
 
   const selectPanel = (panelId: string | null): void => {
-    if (panelId === null) {
-      frames.open(options.conversationTypeId)
-      beginNavigation()
-      return
-    }
-    if (!frames.hasType(panelId)) {
-      // The shipped message names the panel and the id; consumers and the
-      // package's own specs both match on it.
-      throw new Error(`layout.selectPanel: main panel "${panelId}" is not registered`)
-    }
-    frames.open(panelId)
+    // The selection is this layer's, not the tree's: to the core the centre is
+    // one frame of one type, and which panel is inside it is nobody's business
+    // but ours. Throws before the navigation signal is touched, so a rejected
+    // selection leaves a pending navigation alone.
+    options.panels.select(panelId)
     beginNavigation()
   }
 

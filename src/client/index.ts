@@ -13,6 +13,8 @@
 import { createLayoutFacade } from './facade.ts'
 import { LegacyRightbar, LegacySidebar } from './columns-body.ts'
 import { SIDEBAR_DEFAULT } from './columns.ts'
+import { createPanels } from './panels.ts'
+import type { Panels } from './panels.ts'
 import { ThemePresenter } from './theme-presenter.ts'
 
 /** Services this plugin needs before it activates. */
@@ -24,26 +26,29 @@ const CONVERSATION_KEY = 'conversation'
 const SIDEBAR_TYPE = 'legacy.sidebar'
 const RIGHTBAR_TYPE = 'legacy.rightbar'
 
-/** The one panel-keyed field `usePanelInfo` publishes. */
-interface PanelInfo {
-  activePanelId: string | null
+/** Props a registration adds to its component, alongside the seat's own. */
+interface BridgeInjected {
+  panels: Panels
 }
 
-/** Props the bridge's component receives: the child renderer for `main`. */
-interface BridgeProps {
+/** Props the bridge's component receives: the selection and the child renderer. */
+interface BridgeProps extends BridgeInjected {
   renderSlot(key: 'main', owner: object, options: { entryKey: string }): unknown
 }
 
 /**
- * The frame body that carries the conversation.
+ * The frame body that carries the centre.
  *
- * It renders the legacy `main` key with the reserved `conversation` entry key,
- * which is exactly what the shipped shell did.
- * @param props - the child renderer for `main`.
- * @returns the conversation panel.
+ * `main` is a keyed seat, so which panel shows is a key: the reserved
+ * conversation key, or whatever the sidebar selected. Choosing it *here*, inside
+ * one frame, is what lets any plugin register a panel and be selectable without
+ * the frame core ever hearing about panels — and it is why this layer keeps the
+ * selection rather than asking the core for it.
+ * @param props - the selection and the child renderer for `main`.
+ * @returns the selected panel.
  */
-function LegacyConversation({ renderSlot }: BridgeProps): unknown {
-  return renderSlot('main', {}, { entryKey: CONVERSATION_KEY })
+function LegacyConversation({ panels, renderSlot }: BridgeProps): unknown {
+  return renderSlot('main', {}, { entryKey: panels.entryKey() })
 }
 
 /**
@@ -57,6 +62,10 @@ export function apply(ctx: {
     inject(key: string, callback: () => unknown): () => void
     register(options: unknown, component: unknown): unknown
     provideRoot(face: unknown): () => void
+    /** The entries registered into a seat, each with the options it registered. */
+    entries(key: string): readonly { readonly options: unknown }[]
+    /** Called when a seat's entries change. */
+    subscribe(key: string, listener: () => void): () => void
   }
   theme: { getTheme(): Parameters<ThemePresenter['apply']>[0] }
   on(event: 'theme/change', listener: (snapshot: Parameters<ThemePresenter['apply']>[0]) => void): () => void
@@ -96,40 +105,31 @@ export function apply(ctx: {
     frames.registerContent({ id: SIDEBAR_TYPE, kind: SIDEBAR_TYPE, title: 'Navigation' })
     frames.registerContent({ id: RIGHTBAR_TYPE, kind: RIGHTBAR_TYPE, title: 'Right panel' })
 
-    // `ui-workspace` reads `activePanelId !== null` to know the centre is
-    // occupied by something other than the conversation. The published snapshot
-    // must keep its identity between changes: `useSyncExternalStore` compares by
-    // reference, so a freshly built object on every read would re-render forever.
-    const occupiedId = (): string | null => {
-      const active = frames.activeTypeId()
-      return active === undefined || active === CONVERSATION_TYPE ? null : active
-    }
-    let activePanelId = occupiedId()
-    let panelSnapshot: PanelInfo = { activePanelId }
-    const panelListeners = new Set<() => void>()
-    const refresh = (): void => {
-      const next = occupiedId()
-      if (next === activePanelId) return
-      activePanelId = next
-      panelSnapshot = { activePanelId }
-      for (const listener of panelListeners) listener()
-    }
-    const offFrames = frames.subscribe(refresh)
-    const panelInfo = {
-      getSnapshot: (): PanelInfo => panelSnapshot,
-      subscribe: (listener: () => void): (() => void) => {
-        panelListeners.add(listener)
-        return () => { panelListeners.delete(listener) }
-      },
-    }
+    // Which panel the centre shows is this layer's own state, over the `main`
+    // seat. It is deliberately not derived from the frame tree: to the core the
+    // centre is one frame of one type.
+    //
+    // The selection's snapshot keeps its identity between changes, because
+    // `useSyncExternalStore` compares by reference and a freshly built object on
+    // every read would re-render forever.
+    const panels = createPanels({
+      keys: () => ctx.slots.entries('main').flatMap((entry) => {
+        const key = (entry.options as { key?: unknown }).key
+        return typeof key === 'string' ? [key] : []
+      }),
+      subscribe: (listener) => ctx.slots.subscribe('main', listener),
+    }, CONVERSATION_KEY)
+    // A panel whose plugin went away must not leave the centre drawing nothing.
+    const offPanels = ctx.slots.subscribe('main', () => { panels.sync() })
 
     const facade = createLayoutFacade(frames, {
       conversationTypeId: CONVERSATION_TYPE,
       sidebarTypeId: SIDEBAR_TYPE,
       rightbarTypeId: RIGHTBAR_TYPE,
+      panels,
     })
 
-    const dropPanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo } })
+    const dropPanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: panels } })
     const dropService = ctx.reflect.provide('layout', facade)
 
     // The sidebar goes up with the shell. `ui-sidebar` cannot put its own column
@@ -180,7 +180,12 @@ export function apply(ctx: {
         main: { kind: 'keyed', scope: 'root' },
         'shell.overlay': { kind: 'list', scope: 'root' },
       },
+      // The selection reaches the bridge the way a seat hands its occupant extra
+      // props, rather than through the frame's own geometry.
+      inject: (): BridgeInjected => ({ panels }),
     }, LegacyConversation))
+    // The bridge needs the selection, which the seat supplies as an owner prop:
+    // it is this layer's state, not the frame's.
     const dropSidebar = ctx.slots.inject('frames.body', () => ctx.slots.register({
       name: 'frames.body',
       key: SIDEBAR_TYPE,
@@ -201,12 +206,12 @@ export function apply(ctx: {
       offSeed()
       presenter.dispose()
       dropBridge()
+      offPanels()
       dropSidebar()
       dropRightbar()
       // provide()'s disposer settles asynchronously; teardown is fire-and-forget.
       void dropService()
       dropPanelInfo()
-      offFrames()
     }
   }, 'frames-ui-compat: layout, panel info, theme, and the conversation bridge')
 }
