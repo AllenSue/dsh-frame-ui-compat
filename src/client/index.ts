@@ -221,10 +221,10 @@ export function apply(ctx: {
       },
       inject: (): LegacyOverlayInjected => ({ column }),
     }, LegacyOverlay))
-    // Two bodies, two seats, and one body that declares nothing. Each frame
-    // declares the seat it draws into and nothing else — declaration is exclusive
-    // render authority, so two entries naming `sidebar` would be two claimants
-    // for one seat.
+    // Three frame bodies. Two of them declare the seat they draw into; the right
+    // column's declares nothing, because its seat belongs to the overlay entry
+    // above. Declaration is exclusive render authority, so two entries naming
+    // `sidebar` would be two claimants for one seat.
     const dropBridge = ctx.slots.inject('frames.body', () => ctx.slots.register({
       name: 'frames.body',
       key: CONVERSATION_TYPE,
