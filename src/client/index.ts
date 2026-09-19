@@ -212,8 +212,12 @@ export function apply(ctx: {
     // belong to any frame either. `order: -1` keeps the entry under the other
     // overlay entries, which is where the shipped stacking put the right column
     // (below the shell's overlays, so a dialog still covers it).
+    //
+    // `id` is not decoration: this is a list seat, and the runtime refuses a list
+    // entry without one — `list slot "frames.overlay" requires options.id`.
     const dropColumn = ctx.slots.inject('frames.overlay', () => ctx.slots.register({
       name: 'frames.overlay',
+      id: 'legacy-overlay',
       order: -1,
       children: {
         rightbar: { kind: 'single', scope: 'root' },
