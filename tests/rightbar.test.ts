@@ -235,6 +235,23 @@ test('a column that cannot be stood up is reported as no room, not as shown', ()
   assert.equal(column.getSnapshot().box, 0)
 })
 
+test('a navigation column collapsed to its rail is left collapsed', () => {
+  const { frames, state } = tree()
+  const column = createRightColumn(frames, OPTIONS)
+  column.show(true)
+
+  // `toggleSidebar`, as the facade sends it: the column never disappears, it
+  // becomes the rail.
+  const navigation = state.panes.find((pane) => pane.typeId === 'sidebar') as FakePane
+  navigation.share = 56 / 1200
+  column.dismiss()
+
+  assert.ok(
+    Math.abs(navigation.share * 1200 - 56) < 1,
+    `the rail was expanded back to ${String(navigation.share * 1200)}px by the close`,
+  )
+})
+
 test('the column takes the window edge, not the pane the conversation is in', () => {
   const { frames, state } = tree()
   // The user has already split the centre, so the conversation is no longer the
