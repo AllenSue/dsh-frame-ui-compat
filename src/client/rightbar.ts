@@ -47,7 +47,8 @@ export interface ColumnPane {
 
 /** What this file needs from the frame tree. */
 export interface ColumnFrames {
-  openContent(contentId: string, options?: { place?: string; beside?: string }): { ok: boolean }
+  /** Make a frame beside a reference one, seeded with a type. */
+  split(paneId: string | undefined, seed: string, axis: string): { ok: boolean }
   close(paneId: string): { ok: boolean }
   resizePane(paneId: string, fraction: number): { ok: boolean }
   focus(paneId: string): { ok: boolean }
@@ -150,6 +151,8 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
   /** The viewport and the width this layer last left the frame at. */
   let lastViewport: number | undefined
   let lastAsked: number | undefined
+  /** The pane this layer opened for the column. Never a pane the user made. */
+  let columnPane: string | undefined
   /** What the navigation column had before the third column took room. */
   let navRestore: { readonly id: string; readonly width: number } | undefined
 
@@ -177,11 +180,32 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
   const sidebarWidth = (view: ReturnType<ColumnFrames['project']>, viewport: number): number =>
     widthOf(paneFor(view.docked, options.sidebarTypeId), viewport)
 
+  /**
+   * The pane standing for the column: the one this layer opened, and only that
+   * one.
+   *
+   * Deliberately not "whichever pane shows the column's content". The shell
+   * registers that content — it has to, since a frame displays a content — so the
+   * picker offers it, and a user who puts it in a pane of their own would find
+   * this layer resizing and closing it. Which pane is the column is this layer's
+   * arrangement, so it remembers it.
+   * @param docked - the projection's panes.
+   * @returns the column's pane, or undefined when there is none.
+   */
+  const columnOf = (docked: readonly ColumnPane[]): ColumnPane | undefined => {
+    if (columnPane === undefined) return undefined
+    const found = docked.find((candidate) => candidate.id === columnPane)
+    // The tree dropped it — closed by a gesture, or by a preset that does not
+    // include it. The next reconciliation may stand one up again.
+    if (found === undefined) columnPane = undefined
+    return found
+  }
+
   /** What the occupant is told right now. */
   const ownerNow = (): RightColumnSnapshot => {
     const view = frames.project()
     const viewport = view.viewport?.width ?? 0
-    const pane = paneFor(view.docked, options.rightbarTypeId)
+    const pane = columnOf(view.docked)
     const solved = rightbarOwner(viewport, sidebarWidth(view, viewport), preference)
     // While a frame stands for the column, that frame *is* the width: the panel
     // and the column have to agree to the pixel, and whatever moved the frame
@@ -215,6 +239,7 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
    */
   const closeColumn = (pane: ColumnPane, viewport: number): void => {
     frames.close(pane.id)
+    columnPane = undefined
     const record = navRestore
     navRestore = undefined
     if (record === undefined) return
@@ -239,7 +264,7 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
 
     const sameViewport = lastViewport === viewport
     const navigation = paneFor(view.docked, options.sidebarTypeId)
-    let pane = paneFor(view.docked, options.rightbarTypeId)
+    let pane = columnOf(view.docked)
     // The first time the panel is shown it opens at the shipped width, kept from
     // then on so reopening comes back to the width the user left.
     if (shown && track) preference ??= Math.max(RIGHTBAR_MIN, Math.round(viewport * RIGHTBAR_DEFAULT_RATIO))
@@ -273,21 +298,28 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
       // itself against that edge. At boot that is the centre, which is why this
       // is the same placement `beside: centre` would give.
       const beside = rightmost(view.docked)
-      const opened = frames.openContent(options.rightbarTypeId, {
-        place: 'right',
-        ...beside === undefined ? {} : { beside: beside.id },
-      })
+      const before = new Set(view.docked.map((candidate) => candidate.id))
+      // A split, not `openContent`: opening a content de-duplicates by identity
+      // and would focus a pane the *user* put that content in — the picker offers
+      // it, so that is a reachable state — leaving this layer to size a pane that
+      // is not its column. A split always makes the column, and the content it
+      // seats is the one registered for it.
+      const opened = frames.split(beside?.id, options.rightbarTypeId, 'row')
       if (!opened.ok) {
         refused = true
         return
       }
       refused = false
-      // Opening a content focuses its frame, and the shell belongs on its
-      // content — the same repair the sidebar's seeding makes.
-      const openedCentre = paneFor(frames.project().docked, options.conversationTypeId)
+      // Opening a frame focuses it, and the shell belongs on its content — the
+      // same repair the sidebar's seeding makes.
+      const afterOpen = frames.project()
+      const openedCentre = paneFor(afterOpen.docked, options.conversationTypeId)
       if (openedCentre !== undefined) frames.focus(openedCentre.id)
-      pane = paneFor(frames.project().docked, options.rightbarTypeId)
+      // The pane that was not there a moment ago is the column, and this is the
+      // only place that decides so.
+      pane = afterOpen.docked.find((candidate) => !before.has(candidate.id))
       if (pane === undefined) return
+      columnPane = pane.id
       lastAsked = undefined
     }
 

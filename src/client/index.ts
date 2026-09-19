@@ -79,6 +79,7 @@ export function apply(ctx: {
   ctx.effect(() => {
     const frames = ctx.get('frames') as {
       open(typeId: string): { ok: boolean }
+      split(paneId: string | undefined, seed: string, axis: string): { ok: boolean }
       openContent(contentId: string, options?: { place?: string; beside?: string }): { ok: boolean }
       close(paneId: string): { ok: boolean }
       focus(paneId: string): { ok: boolean }

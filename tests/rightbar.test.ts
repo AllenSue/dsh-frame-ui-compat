@@ -74,14 +74,16 @@ function tree(viewport = 1200) {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
-    openContent(contentId, options) {
+    split(paneId, seed, axis) {
       if (state.refuseOpen) return { ok: false }
+      if (axis !== 'row') return { ok: false }
+      const at = Math.max(0, state.panes.findIndex((pane) => pane.id === paneId))
+      const reference = state.panes[at] as FakePane
       const id = `pane${String(state.next)}`
       state.next += 1
-      const at = Math.max(0, state.panes.findIndex((pane) => pane.id === options?.beside))
-      const beside = state.panes[at] as FakePane
-      beside.share /= 2
-      state.panes.splice(at + 1, 0, { id, share: beside.share, typeId: contentId })
+      const share = reference.share / 2
+      reference.share = share
+      state.panes.splice(at + 1, 0, { id, share, typeId: seed })
       state.opened.push(id)
       notify()
       return { ok: true }
@@ -198,6 +200,21 @@ test('the width the user drags the column to is the width it comes back at', () 
   column.show(true)
   const again = standing(state.panes) as FakePane
   assert.ok(Math.abs(again.share * 1200 - 360) < 1, 'reopening restores the chosen width, not the default')
+})
+
+test('a pane the user put the column content in is not the column', () => {
+  // The shell holds that content — it has to, since a frame displays a content —
+  // so the picker offers it. A user who shows it in a pane of their own must not
+  // find this layer resizing or closing it: which pane is the column is this
+  // layer's arrangement, and it remembers the one it made.
+  const { frames, state, notify } = tree()
+  const column = createRightColumn(frames, OPTIONS)
+  state.panes.push({ id: 'theirs', share: 0.2, typeId: 'rightbar' })
+
+  notify()
+
+  assert.equal(state.panes.some((pane) => pane.id === 'theirs'), true, 'the user\u2019s pane survives')
+  assert.equal(column.getSnapshot().box, 0, 'and nothing is drawn as a column')
 })
 
 test('a column the tree lost is put back while the occupant still says it is shown', () => {
