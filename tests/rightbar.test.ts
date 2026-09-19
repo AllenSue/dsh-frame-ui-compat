@@ -66,7 +66,7 @@ function tree(viewport = 1200) {
         docked: state.panes.map((pane) => {
           const rect = { x, width: pane.share }
           x += pane.share
-          return { id: pane.id, rect, tabs: [{ typeId: pane.typeId }] }
+          return { id: pane.id, rect, content: { typeId: pane.typeId } }
         }),
       }
     },

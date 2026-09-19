@@ -35,7 +35,8 @@ import type { RightColumn } from './rightbar.ts'
 export interface FacadePane {
   readonly id: string
   readonly rect: { readonly width: number }
-  readonly tabs: readonly { readonly typeId: string }[]
+  /** What the frame displays; `undefined` for one waiting for a choice. */
+  readonly content: { readonly typeId: string } | undefined
 }
 
 /** What the facade needs from the frame tree. */
@@ -105,7 +106,7 @@ export function createLayoutFacade(frames: LayoutFrames, options: LayoutFacadeOp
   const column = (typeId: string): { id: string; width: number } | undefined => {
     const view = frames.project()
     if (view.viewport === undefined) return undefined
-    const pane = view.docked.find((candidate) => candidate.tabs.some((tab) => tab.typeId === typeId))
+    const pane = view.docked.find((candidate) => candidate.content?.typeId === typeId)
     return pane === undefined ? undefined : { id: pane.id, width: pane.rect.width * view.viewport.width }
   }
 

@@ -42,7 +42,8 @@ import {
 export interface ColumnPane {
   readonly id: string
   readonly rect: { readonly x: number; readonly width: number }
-  readonly tabs: readonly { readonly typeId: string }[]
+  /** What the frame displays; `undefined` for one waiting for a choice. */
+  readonly content: { readonly typeId: string } | undefined
 }
 
 /** What this file needs from the frame tree. */
@@ -162,7 +163,7 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
 
   /** The pane holding a type, if the tree has one. */
   const paneFor = (docked: readonly ColumnPane[], typeId: string): ColumnPane | undefined =>
-    docked.find((pane) => pane.tabs.some((tab) => tab.typeId === typeId))
+    docked.find((pane) => pane.content?.typeId === typeId)
 
   const widthOf = (pane: ColumnPane | undefined, viewport: number): number =>
     // Whole pixels, because the same number is handed to a stylesheet as a width

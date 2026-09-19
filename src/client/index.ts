@@ -95,7 +95,7 @@ export function apply(ctx: {
         readonly docked: readonly {
           readonly id: string
           readonly rect: { readonly x: number; readonly width: number }
-          readonly tabs: readonly { readonly typeId: string }[]
+          readonly content: { readonly typeId: string } | undefined
         }[]
       }
     }
@@ -175,12 +175,12 @@ export function apply(ctx: {
     // has always meant.
     const seedColumns = (): void => {
       const centre = frames.project().docked
-        .find((pane) => pane.tabs.some((tab) => tab.typeId === CONVERSATION_TYPE))
+        .find((pane) => pane.content?.typeId === CONVERSATION_TYPE)
       const brought = frames.openContent(SIDEBAR_TYPE, { place: 'left' })
       if (!brought.ok) return
       const view = frames.project()
       if (view.viewport === undefined) return
-      const navigation = view.docked.find((pane) => pane.tabs.some((tab) => tab.typeId === SIDEBAR_TYPE))
+      const navigation = view.docked.find((pane) => pane.content?.typeId === SIDEBAR_TYPE)
       if (navigation !== undefined) frames.resizePane(navigation.id, SIDEBAR_DEFAULT / view.viewport.width)
       // Opening a frame focuses it, which would leave the caret on the navigation
       // column at boot. The shell opens onto its content, so focus goes back.

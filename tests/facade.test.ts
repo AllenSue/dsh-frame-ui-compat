@@ -58,7 +58,7 @@ function harness(registered: readonly string[] = ['conversation', 'files']) {
 
 /** The docked pane holding a type, if the tree has one. */
 function paneOf(service: ReturnType<typeof harness>['service'], typeId: string) {
-  return service.project().docked.find((pane) => pane.tabs.some((tab) => tab.typeId === typeId))
+  return service.project().docked.find((pane) => pane.content?.typeId === typeId)
 }
 
 test('selecting no panel returns the centre to the conversation', () => {
