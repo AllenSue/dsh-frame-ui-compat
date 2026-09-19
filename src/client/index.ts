@@ -83,7 +83,7 @@ export function apply(ctx: {
       activeTypeId(): string | undefined
       isOpen(typeId: string): boolean
       hasType(typeId: string): boolean
-      registerType(definition: { id: string; title: () => string }): void
+      registerType(definition: { id: string; title: () => string; policy?: { grows?: boolean } }): void
       registerContent(content: { id: string; kind: string; title: string }): { ok: boolean }
       subscribe(listener: () => void): () => void
       project(): {
@@ -96,7 +96,10 @@ export function apply(ctx: {
       }
     }
     frames.registerType({ id: CONVERSATION_TYPE, title: () => 'Conversation' })
-    frames.registerType({ id: SIDEBAR_TYPE, title: () => 'Navigation' })
+    // The navigation column stays put. Closing the frame beside it widens what is
+    // left; without this the rail would take a proportional share of the freed
+    // space and the centre would not get all of it.
+    frames.registerType({ id: SIDEBAR_TYPE, title: () => 'Navigation', policy: { grows: false } })
     frames.registerType({ id: RIGHTBAR_TYPE, title: () => 'Right panel' })
     // A column has to be able to exist with no frame showing it — the sidebar is
     // closed by shrinking to the rail, and the right panel is closed by its
