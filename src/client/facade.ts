@@ -6,7 +6,7 @@
  * `ui-sidebar-right` inject the service and call into it; nothing about them
  * changes.
  *
- * Two of the five calls need saying more precisely than the interface does:
+ * Three of the five calls need saying more precisely than the interface does:
  *
  * - `toggleSidebar()` toggles the sidebar between *collapsed* and *expanded*, not
  *   between present and absent. In the shipped grid the column never disappeared:
@@ -17,8 +17,10 @@
  * - `openRightbar()` and `closeRightbar()` are **reports, not commands**. The
  *   occupant decides whether it is shown and tells the frame how much room to
  *   reserve; the interface says as much. So this facade takes the occupant at its
- *   word: a report that it is shown opens the frame, a report that it is hidden
- *   closes it.
+ *   word and hands the report to the right column, which owns the numbers and the
+ *   frame that reserves them (`./rightbar.ts`).
+ * - the sidebar's own geometry is still this file's, because its column never
+ *   disappears and so its frame is always there to resize.
  *
  * The facade is pure over a frame tree and a viewport, so it is testable without
  * a browser.
@@ -27,6 +29,7 @@ import {
   clampWidth, isCollapsed, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
 } from './columns.ts'
 import type { Panels } from './panels.ts'
+import type { RightColumn } from './rightbar.ts'
 
 /** One docked frame as the facade reads it. */
 export interface FacadePane {
@@ -37,11 +40,7 @@ export interface FacadePane {
 
 /** What the facade needs from the frame tree. */
 export interface LayoutFrames {
-  open(typeId: string): { ok: boolean }
-  openContent(contentId: string, options?: { place?: string; beside?: string }): { ok: boolean }
-  close(paneId: string): { ok: boolean }
   resizePane(paneId: string, fraction: number): { ok: boolean }
-  activeTypeId(): string | undefined
   /** The projection: where the frames are, and how big the area they fill is. */
   project(): {
     readonly viewport: { readonly width: number; readonly height: number } | undefined
@@ -51,14 +50,12 @@ export interface LayoutFrames {
 
 /** How the facade addresses the tree. */
 export interface LayoutFacadeOptions {
-  /** The type that plays the shell's centre. */
-  conversationTypeId: string
   /** The type that plays the navigation column. */
   sidebarTypeId: string
-  /** The type that plays the right column. */
-  rightbarTypeId: string
   /** Which panel the centre frame is showing. */
   panels: Panels
+  /** The right column: it owns its own frame, its own width, and its own seat. */
+  column: RightColumn
 }
 
 /** The panel-navigation and geometry actions `ui-layout` exposed as `ctx.layout`. */
@@ -130,23 +127,17 @@ export function createLayoutFacade(frames: LayoutFrames, options: LayoutFacadeOp
   }
 
   const openRightbar = (track: boolean, _fullscreen: boolean): void => {
-    const view = frames.project()
-    if (view.viewport === undefined) return
-    if (column(options.rightbarTypeId) !== undefined) return
-    // Beside the centre when it can take a track, which is what the shipped
-    // column was: an extra track on the right rather than a pane of the centre.
-    const centre = view.docked.find((pane) => pane.tabs.some((tab) => tab.typeId === options.conversationTypeId))
-    const beside = track ? centre?.id : undefined
-    frames.openContent(options.rightbarTypeId, {
-      place: 'right',
-      ...beside === undefined ? {} : { beside },
-    })
+    // A report, not a command: the occupant says it is displayed, and whether it
+    // wants a column reserved for it. `fullscreen` needs nothing from this layer
+    // — a panel that covers the viewport presents itself that way, which is the
+    // same division the shipped grid had (`track ? pref : 0` for the track).
+    options.column.show(track)
   }
 
   const closeRightbar = (): void => {
-    const pane = column(options.rightbarTypeId)
-    // The occupant decides when it is shown; this only carries the decision out.
-    if (pane !== undefined) frames.close(pane.id)
+    // Also a report: the occupant says it is hidden. The column goes away and
+    // the content stays.
+    options.column.dismiss()
   }
 
   return { selectPanel, beginNavigation, toggleSidebar, openRightbar, closeRightbar }

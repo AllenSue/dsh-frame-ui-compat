@@ -3,7 +3,7 @@
  *
  * `ui-layout` cannot be edited, so this stands in for it: it provides
  * `ctx.layout`, supplies the `usePanelInfo` standard prop, presents the theme to
- * the document, and registers one frame body that declares `main` as its child.
+ * the document, and registers the frame bodies that declare the legacy seats.
  *
  * The last part is the bridge. A registration may declare child slots, so
  * declaring `main` here makes `ui-conversation`'s existing
@@ -11,10 +11,13 @@
  * edit to `ui-conversation`.
  */
 import { createLayoutFacade } from './facade.ts'
-import { LegacyRightbar, LegacySidebar } from './columns-body.ts'
+import { LegacyRightColumnPane, LegacySidebar } from './columns-body.ts'
 import { SIDEBAR_DEFAULT } from './columns.ts'
+import { LegacyOverlay } from './overlay-body.ts'
+import type { LegacyOverlayInjected } from './overlay-body.ts'
 import { createPanels } from './panels.ts'
 import type { Panels } from './panels.ts'
+import { createRightColumn } from './rightbar.ts'
 import { ThemePresenter } from './theme-presenter.ts'
 
 /** Services this plugin needs before it activates. */
@@ -83,23 +86,35 @@ export function apply(ctx: {
       activeTypeId(): string | undefined
       isOpen(typeId: string): boolean
       hasType(typeId: string): boolean
-      registerType(definition: { id: string; title: () => string; policy?: { grows?: boolean } }): void
+      registerType(definition: { id: string; title: () => string; policy?: { grows?: boolean; closable?: boolean } }): void
       registerContent(content: { id: string; kind: string; title: string }): { ok: boolean }
       subscribe(listener: () => void): () => void
       project(): {
         readonly viewport: { readonly width: number; readonly height: number } | undefined
         readonly docked: readonly {
           readonly id: string
-          readonly rect: { readonly width: number }
+          readonly rect: { readonly x: number; readonly width: number }
           readonly tabs: readonly { readonly typeId: string }[]
         }[]
       }
     }
     frames.registerType({ id: CONVERSATION_TYPE, title: () => 'Conversation' })
-    // The navigation column stays put. Closing the frame beside it widens what is
-    // left; without this the rail would take a proportional share of the freed
-    // space and the centre would not get all of it.
-    frames.registerType({ id: SIDEBAR_TYPE, title: () => 'Navigation', policy: { grows: false } })
+    // The navigation column can never be brought back by this layer once it is
+    // gone — the thing that would ask for it is the occupant that went away with
+    // it — so the close gesture stops at it.
+    //
+    // It also stays put when a frame beside it closes. Without that the rail
+    // would take a proportional share of the freed space and the centre would not
+    // get all of it.
+    frames.registerType({
+      id: SIDEBAR_TYPE,
+      title: () => 'Navigation',
+      policy: { grows: false, closable: false },
+    })
+    // The right column is closable, and has to be: closing its frame is exactly
+    // what "hidden" means here. A close that arrives from anywhere else is
+    // repaired by the column's next reconciliation, because whether the panel is
+    // shown is its occupant's decision and not a frame manager's.
     frames.registerType({ id: RIGHTBAR_TYPE, title: () => 'Right panel' })
     // A column has to be able to exist with no frame showing it — the sidebar is
     // closed by shrinking to the rail, and the right panel is closed by its
@@ -125,11 +140,19 @@ export function apply(ctx: {
     // A panel whose plugin went away must not leave the centre drawing nothing.
     const offPanels = ctx.slots.subscribe('main', () => { panels.sync() })
 
-    const facade = createLayoutFacade(frames, {
-      conversationTypeId: CONVERSATION_TYPE,
-      sidebarTypeId: SIDEBAR_TYPE,
+    // The right column is two things, and `./rightbar.ts` owns both: a seat that
+    // outlives every frame, and the frame that reserves its width while the
+    // occupant reports that it is shown.
+    const column = createRightColumn(frames, {
       rightbarTypeId: RIGHTBAR_TYPE,
+      sidebarTypeId: SIDEBAR_TYPE,
+      conversationTypeId: CONVERSATION_TYPE,
+    })
+
+    const facade = createLayoutFacade(frames, {
+      sidebarTypeId: SIDEBAR_TYPE,
       panels,
+      column,
     })
 
     const dropPanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: panels } })
@@ -140,8 +163,10 @@ export function apply(ctx: {
     // so whoever owns the column types owns the opening. This is that: the
     // composition, which is the only layer that knows these three types exist.
     //
-    // The right column is deliberately *not* opened here. Whether it is shown is
-    // its occupant's recorded business, and it says so through `ctx.layout`; the
+    // The right column is *not* opened here, and no longer needs to be. Its seat
+    // is mounted with this plugin (below), so the occupant reports its own
+    // presentation from boot: it says "hidden" until someone expands it, and the
+    // column appears, resizes itself and goes away again on those reports. The
     // shipped shell opened onto no right column either.
     //
     // The core default is still one frame. A profile that mounts no compatibility
@@ -154,8 +179,8 @@ export function apply(ctx: {
       if (!brought.ok) return
       const view = frames.project()
       if (view.viewport === undefined) return
-      const column = view.docked.find((pane) => pane.tabs.some((tab) => tab.typeId === SIDEBAR_TYPE))
-      if (column !== undefined) frames.resizePane(column.id, SIDEBAR_DEFAULT / view.viewport.width)
+      const navigation = view.docked.find((pane) => pane.tabs.some((tab) => tab.typeId === SIDEBAR_TYPE))
+      if (navigation !== undefined) frames.resizePane(navigation.id, SIDEBAR_DEFAULT / view.viewport.width)
       // Opening a frame focuses it, which would leave the caret on the navigation
       // column at boot. The shell opens onto its content, so focus goes back.
       if (centre !== undefined) frames.focus(centre.id)
@@ -173,32 +198,53 @@ export function apply(ctx: {
     }
     trySeed()
     const offSeed = frames.subscribe(trySeed)
-    // Three bodies, three seats. Each frame declares the seat it draws into and
-    // nothing else — declaration is exclusive render authority, so two entries
-    // naming `sidebar` would be two claimants for one seat.
+    // The right column's seat is hosted on the overlay seat rather than in a
+    // frame's body, and that is the whole fix for a column that never appeared:
+    // a seat mounted by a body exists only while that frame does, and the frame
+    // is opened *because* the occupant reported it was shown — so the occupant
+    // could never make the first report. `frames.overlay` is drawn whether or not
+    // any frame exists, so the panel, its store and its reporting stay alive
+    // while nothing displays it, and the frame is left with one job: reserving
+    // the width.
+    //
+    // `shell.overlay` is declared on the same entry for the same reason and in
+    // the same place the shipped frame had it: the shell's own overlays do not
+    // belong to any frame either. `order: -1` keeps the entry under the other
+    // overlay entries, which is where the shipped stacking put the right column
+    // (below the shell's overlays, so a dialog still covers it).
+    const dropColumn = ctx.slots.inject('frames.overlay', () => ctx.slots.register({
+      name: 'frames.overlay',
+      order: -1,
+      children: {
+        rightbar: { kind: 'single', scope: 'root' },
+        'shell.overlay': { kind: 'list', scope: 'root' },
+      },
+      inject: (): LegacyOverlayInjected => ({ column }),
+    }, LegacyOverlay))
+    // Two bodies, two seats, and one body that declares nothing. Each frame
+    // declares the seat it draws into and nothing else — declaration is exclusive
+    // render authority, so two entries naming `sidebar` would be two claimants
+    // for one seat.
     const dropBridge = ctx.slots.inject('frames.body', () => ctx.slots.register({
       name: 'frames.body',
       key: CONVERSATION_TYPE,
-      children: {
-        main: { kind: 'keyed', scope: 'root' },
-        'shell.overlay': { kind: 'list', scope: 'root' },
-      },
+      children: { main: { kind: 'keyed', scope: 'root' } },
       // The selection reaches the bridge the way a seat hands its occupant extra
       // props, rather than through the frame's own geometry.
       inject: (): BridgeInjected => ({ panels }),
     }, LegacyConversation))
-    // The bridge needs the selection, which the seat supplies as an owner prop:
-    // it is this layer's state, not the frame's.
     const dropSidebar = ctx.slots.inject('frames.body', () => ctx.slots.register({
       name: 'frames.body',
       key: SIDEBAR_TYPE,
       children: { sidebar: { kind: 'single', scope: 'root' } },
     }, LegacySidebar))
+    // The right column's frame reserves the width and draws nothing: the panel
+    // belongs to the seat above, which is mounted for as long as the content is
+    // rather than for as long as this frame is.
     const dropRightbar = ctx.slots.inject('frames.body', () => ctx.slots.register({
       name: 'frames.body',
       key: RIGHTBAR_TYPE,
-      children: { rightbar: { kind: 'single', scope: 'root' } },
-    }, LegacyRightbar))
+    }, LegacyRightColumnPane))
 
     const presenter = new ThemePresenter()
     presenter.apply(ctx.theme.getTheme())
@@ -212,6 +258,8 @@ export function apply(ctx: {
       offPanels()
       dropSidebar()
       dropRightbar()
+      dropColumn()
+      column.dispose()
       // provide()'s disposer settles asynchronously; teardown is fire-and-forget.
       void dropService()
       dropPanelInfo()

@@ -7,9 +7,12 @@ import { createFramesService } from '../../frames/src/service/service.ts'
 import { createLayoutFacade } from '../src/client/facade.ts'
 import { createPanels } from '../src/client/panels.ts'
 import type { PanelSource } from '../src/client/panels.ts'
+import { createRightColumn } from '../src/client/rightbar.ts'
 
 const CONVERSATION: FrameTypeDefinition = { id: 'conversation', title: () => 'Conversation' }
 const FILES: FrameTypeDefinition = { id: 'files', title: () => 'Files' }
+const SIDEBAR = 'legacy.sidebar'
+const RIGHTBAR = 'legacy.rightbar'
 
 /** A `main` seat over a mutable list of registered keys. */
 function seat(initial: readonly string[] = []): PanelSource & { set(keys: readonly string[]): void } {
@@ -26,25 +29,36 @@ function seat(initial: readonly string[] = []): PanelSource & { set(keys: readon
 }
 
 /**
- * A service with both types registered, a `main` seat, and the facade over both.
+ * A service with every type registered, a `main` seat, and the facade over both.
  *
  * The panel selection is the compatibility layer's, so it is exercised here over
- * a seat rather than through the frame tree.
+ * a seat rather than through the frame tree. The two column types and their
+ * contents are registered the way the plugin body registers them, because the
+ * right column can only stand a frame up for a content that exists.
  */
 function harness(registered: readonly string[] = ['conversation', 'files']) {
   const service = createFramesService({ startup: CONVERSATION })
   service.attachRenderer({ id: 'react', capabilities: REACT_CAPABILITIES })
   service.reportMeasurements({ viewport: { width: 1000, height: 800 } })
   service.registerType(FILES)
+  service.registerType({ id: SIDEBAR, title: () => 'Navigation' })
+  service.registerType({ id: RIGHTBAR, title: () => 'Right panel' })
+  service.registerContent({ id: SIDEBAR, kind: SIDEBAR, title: 'Navigation' })
+  service.registerContent({ id: RIGHTBAR, kind: RIGHTBAR, title: 'Right panel' })
   const mainSeat = seat(registered)
   const panels = createPanels(mainSeat, CONVERSATION.id)
-  const facade = createLayoutFacade(service, {
+  const column = createRightColumn(service, {
+    rightbarTypeId: RIGHTBAR,
+    sidebarTypeId: SIDEBAR,
     conversationTypeId: CONVERSATION.id,
-    sidebarTypeId: 'legacy.sidebar',
-    rightbarTypeId: 'legacy.rightbar',
-    panels,
   })
-  return { service, facade, panels, mainSeat }
+  const facade = createLayoutFacade(service, { sidebarTypeId: SIDEBAR, panels, column })
+  return { service, facade, panels, mainSeat, column }
+}
+
+/** The docked pane holding a type, if the tree has one. */
+function paneOf(service: ReturnType<typeof harness>['service'], typeId: string) {
+  return service.project().docked.find((pane) => pane.tabs.some((tab) => tab.typeId === typeId))
 }
 
 test('selecting no panel returns the centre to the conversation', () => {
@@ -138,12 +152,32 @@ test('the published snapshot keeps its identity until the selection changes', ()
   assert.notEqual(panels.getSnapshot(), before)
 })
 
-test('the geometry actions exist and do nothing', () => {
+test('the geometry reports are carried out on the tree, and the tree alone', () => {
+  const { facade, service } = harness()
+  // Nothing has reported anything yet, so no frame stands for the right column —
+  // which is the state the whole fix rests on: the seat is mounted and the tree
+  // is untouched until the occupant says otherwise.
+  assert.equal(paneOf(service, RIGHTBAR), undefined)
+
+  facade.openRightbar(true, false)
+  const standing = paneOf(service, RIGHTBAR)
+  assert.notEqual(standing, undefined, 'a report that it is shown stands a column up')
+  // The shipped width: 45% of 1000px, inside the room the sidebar leaves.
+  assert.ok(
+    Math.abs((standing as unknown as { rect: { width: number } }).rect.width * 1000 - 450) < 1,
+    'the column takes the width the shipped shell would have given it',
+  )
+
+  facade.closeRightbar()
+  assert.equal(paneOf(service, RIGHTBAR), undefined, 'a report that it is hidden takes it away again')
+  // The content outlived the frame, which is what lets the panel come back as
+  // itself rather than as a new one.
+  assert.ok(service.project().contents.some((content) => content.id === RIGHTBAR))
+})
+
+test('the sidebar toggle is a no-op while no navigation column is up', () => {
   const { facade } = harness()
 
-  assert.doesNotThrow(() => {
-    facade.toggleSidebar()
-    facade.openRightbar(true, false)
-    facade.closeRightbar()
-  })
+  assert.doesNotThrow(() => { facade.toggleSidebar() })
+  assert.equal(paneOf(harness().service, SIDEBAR), undefined, 'the harness seeds nothing by itself')
 })
