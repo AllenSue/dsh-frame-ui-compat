@@ -87,7 +87,11 @@ export function apply(ctx: {
       activeTypeId(): string | undefined
       isOpen(typeId: string): boolean
       hasType(typeId: string): boolean
-      registerType(definition: { id: string; title: () => string; policy?: { grows?: boolean; closable?: boolean } }): void
+      registerType(definition: {
+        id: string
+        title: () => string
+        policy?: { grows?: boolean; closable?: boolean; placeable?: boolean }
+      }): void
       registerContent(content: { id: string; kind: string; title: string }): { ok: boolean }
       subscribe(listener: () => void): () => void
       project(): {
@@ -120,7 +124,14 @@ export function apply(ctx: {
     // what "hidden" means here. A close that arrives from anywhere else is
     // repaired by the column's next reconciliation, because whether the panel is
     // shown is its occupant's decision and not a frame manager's.
-    frames.registerType({ id: RIGHTBAR_TYPE, title: () => 'Right panel' })
+    //
+    // It is also not placeable, which is the one thing about this column the core
+    // has to know. Its panel is mounted on the overlay layer and drawn by this
+    // layer at whatever width the column has — the frame only reserves that width
+    // and draws an empty box. So a frame of the user's own displaying this content
+    // could not show anything: the picker would be offering an empty box. The
+    // sidebar stays placeable, because its own body does draw its seat.
+    frames.registerType({ id: RIGHTBAR_TYPE, title: () => 'Right panel', policy: { placeable: false } })
     // A column has to be able to exist with no frame showing it — the sidebar is
     // closed by shrinking to the rail, and the right panel is closed by its
     // occupant deciding so. Registering the contents up front is what lets either
