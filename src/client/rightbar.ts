@@ -24,13 +24,15 @@
  * shell says the same thing in `AppFrame.tsx:165-168`: eligibility must include
  * the space before the occupant's first shown report arrives.
  *
- * One difference from the shipped grid is deliberate and recorded here. That grid
- * solved three columns from preferences, so opening the panel shortened the
- * centre alone. Here the core gives a pane its share proportionally from *every*
- * sibling, so the navigation column concedes a little room while the third column
- * is open. It is handed back when the column closes — without that, every open
- * and close would walk the sidebar narrower, because a close gives the freed
- * space to the centre and leaves the rail where it was squeezed to.
+ * The width this column takes comes out of the panes that can give it. That was
+ * once a deliberate difference from the shipped grid: the port's `resizePane`
+ * charged every sibling in proportion, so opening the panel also squeezed the
+ * navigation rail by a few pixels and the layer handed that back when the column
+ * closed. The rail is now declared **fixed** (`grows: false`), so the core keeps
+ * its share and charges the rest — which is what the shipped grid's
+ * `280px minmax(0, 1fr) 0` did all along. The hand-back below stays as the
+ * repair for a rail the *user* moved while the column was open, and for a rail
+ * that is not declared fixed.
  */
 import type { RightbarOwnerProps } from '@deepseek-ai/dsh-client-ui-layout/client'
 import {
