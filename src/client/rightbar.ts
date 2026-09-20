@@ -69,6 +69,15 @@ export interface RightColumnOptions {
   sidebarTypeId: string
   /** The frame the column goes beside. */
   conversationTypeId: string
+  /**
+   * The pane the plugin body stood the navigation column up in, if it is there.
+   *
+   * The same distinction `columnOf` makes for this column, made for the one on
+   * the left: a frame the user made that happens to display a navigation panel is
+   * not the rail, so the room this column takes is measured against — and handed
+   * back to — the rail and nothing else.
+   */
+  navPane: () => string | undefined
 }
 
 /** What the seat is handed, and how wide its own box is. */
@@ -170,6 +179,21 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
     // and compared against what was asked for.
     pane === undefined ? 0 : Math.round(pane.rect.width * viewport)
 
+  /**
+   * The pane the plugin body stood up as the navigation column.
+   *
+   * Deliberately not "whichever pane shows the navigation type": the shell has to
+   * register that content for a frame to display it, so the picker offers it, and
+   * a user who puts a navigation panel in a frame of their own would otherwise
+   * have this layer measuring and resizing *their* frame as if it were the rail.
+   * @param docked - the projection's panes.
+   * @returns the rail's pane, or undefined when the shell has none.
+   */
+  const navOf = (docked: readonly ColumnPane[]): ColumnPane | undefined => {
+    const id = options.navPane()
+    return id === undefined ? undefined : docked.find((pane) => pane.id === id)
+  }
+
   /** The pane that already reaches furthest right, which is where a column goes. */
   const rightmost = (docked: readonly ColumnPane[]): ColumnPane | undefined =>
     docked.reduce<ColumnPane | undefined>(
@@ -179,7 +203,7 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
 
   /** The width the navigation column takes out of the window, 0 when it is closed. */
   const sidebarWidth = (view: ReturnType<ColumnFrames['project']>, viewport: number): number =>
-    widthOf(paneFor(view.docked, options.sidebarTypeId), viewport)
+    widthOf(navOf(view.docked), viewport)
 
   /**
    * The pane standing for the column: the one this layer opened, and only that
@@ -244,7 +268,7 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
     const record = navRestore
     navRestore = undefined
     if (record === undefined) return
-    const navigation = paneFor(frames.project().docked, options.sidebarTypeId)
+    const navigation = navOf(frames.project().docked)
     if (navigation === undefined) return
     const current = widthOf(navigation, viewport)
     // A rail stays a rail: the occupant collapsed it while the panel was open,
@@ -264,7 +288,7 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
     if (viewport === undefined || viewport <= 0) return
 
     const sameViewport = lastViewport === viewport
-    const navigation = paneFor(view.docked, options.sidebarTypeId)
+    const navigation = navOf(view.docked)
     let pane = columnOf(view.docked)
     // The first time the panel is shown it opens at the shipped width, kept from
     // then on so reopening comes back to the width the user left.
@@ -343,13 +367,15 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
       frames.resizePane(pane.id, asked)
       // Ask in window fractions, measure what came back, and correct once: the
       // pane's parent split is not necessarily the window (see `columnShare`).
-      const landed = widthOf(paneFor(frames.project().docked, options.rightbarTypeId), viewport)
+      // Measured through the pane this layer opened, not through the type: the
+      // picker offers the content, so a pane showing it may be the user's.
+      const landed = widthOf(columnOf(frames.project().docked), viewport)
       if (landed > 0 && Math.abs(landed - wanted) > 1) {
-        const corrected = paneFor(frames.project().docked, options.rightbarTypeId)
+        const corrected = columnOf(frames.project().docked)
         if (corrected !== undefined) frames.resizePane(corrected.id, columnShare(wanted, landed, asked))
       }
     }
-    lastAsked = widthOf(paneFor(frames.project().docked, options.rightbarTypeId), viewport)
+    lastAsked = widthOf(columnOf(frames.project().docked), viewport)
   }
 
   const reconcile = (): void => {

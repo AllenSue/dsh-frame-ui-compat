@@ -28,6 +28,10 @@ const OPTIONS = {
   rightbarTypeId: 'rightbar',
   sidebarTypeId: 'sidebar',
   conversationTypeId: 'conversation',
+  // The pane the plugin body stood the rail up in. This is the pane the column's
+  // arithmetic is about — never "whichever pane shows a navigation panel", which
+  // can be a frame the user made.
+  navPane: (): string | undefined => 'navigation',
 }
 
 /**
@@ -50,6 +54,8 @@ function tree(viewport = 1200) {
     ] as FakePane[],
     opened: [] as string[],
     focused: [] as string[],
+    /** Every `resizePane` the layer asked for, so a test can say what it touched. */
+    resized: [] as { id: string; fraction: number }[],
     refuseOpen: false,
     next: 1,
   }
@@ -106,6 +112,7 @@ function tree(viewport = 1200) {
     resizePane(paneId, fraction) {
       const pane = state.panes.find((candidate) => candidate.id === paneId)
       if (pane === undefined) return { ok: false }
+      state.resized.push({ id: paneId, fraction })
       const others = state.panes.filter((candidate) => candidate.id !== paneId)
       const held = others.reduce((sum, candidate) => sum + candidate.share, 0)
       pane.share = fraction
@@ -306,6 +313,24 @@ test('opening and closing the column does not walk the sidebar narrower', () => 
     Math.abs(navWidth() - before) < 1,
     `the navigation column is ${String(navWidth())}px, it was ${String(before)}px`,
   )
+})
+
+test('a frame the user made that shows a navigation panel is not the rail', () => {
+  const { frames, state } = tree()
+  // The picker offers the navigation *content*, so putting a navigation panel in
+  // a frame of one's own is a reachable state — and that frame comes first in the
+  // draw order here, which is exactly how the layer would mistake it for the rail
+  // if it asked "which pane shows a navigation panel".
+  state.panes.unshift({ id: 'mine', share: 200 / 1200, typeId: 'sidebar' })
+  const column = createRightColumn(frames, OPTIONS)
+
+  column.show(true)
+  state.resized.length = 0
+  column.dismiss()
+
+  const touched = state.resized.map((call) => call.id)
+  assert.ok(touched.includes('navigation'), 'the room goes back to the rail the layer stood up')
+  assert.equal(touched.includes('mine'), false, "and never to a frame the user made, which is none of this layer's business")
 })
 
 test('a narrowed window takes the track away without forgetting the width', () => {

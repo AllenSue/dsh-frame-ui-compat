@@ -57,6 +57,15 @@ export interface LayoutFacadeOptions {
   panels: Panels
   /** The right column: it owns its own frame, its own width, and its own seat. */
   column: RightColumn
+  /**
+   * The pane the plugin body stood the navigation column up in, if it is there.
+   *
+   * The collapse button belongs to the panel, so it acts on the panel's frame:
+   * the rail this layer made when it is standing, and otherwise the frame that is
+   * showing a navigation panel. That fallback is what keeps the button alive when
+   * the rail was closed and the panel is living in a frame of the user's.
+   */
+  navPane: () => string | undefined
 }
 
 /** The panel-navigation and geometry actions `ui-layout` exposed as `ctx.layout`. */
@@ -102,11 +111,22 @@ export function createLayoutFacade(frames: LayoutFrames, options: LayoutFacadeOp
     beginNavigation()
   }
 
-  /** The frame showing a type, and how many pixels wide it is. */
-  const column = (typeId: string): { id: string; width: number } | undefined => {
+  /**
+   * The frame showing the navigation panel, and how many pixels wide it is.
+   *
+   * The rail this layer stood up comes first, because "which pane shows a
+   * navigation panel" and "which pane is the navigation column" are different
+   * questions: the picker offers the content, so a frame the user made can be
+   * showing one. Only when the rail is gone does that frame become the answer —
+   * the panel is then wherever the user put it, and its own button has to reach it.
+   * @returns the pane's id and width in px, or undefined when there is no panel.
+   */
+  const navigationColumn = (): { id: string; width: number } | undefined => {
     const view = frames.project()
     if (view.viewport === undefined) return undefined
-    const pane = view.docked.find((candidate) => candidate.content?.typeId === typeId)
+    const id = options.navPane()
+    const pane = (id === undefined ? undefined : view.docked.find((candidate) => candidate.id === id))
+      ?? view.docked.find((candidate) => candidate.content?.typeId === options.sidebarTypeId)
     return pane === undefined ? undefined : { id: pane.id, width: pane.rect.width * view.viewport.width }
   }
 
@@ -115,7 +135,7 @@ export function createLayoutFacade(frames: LayoutFrames, options: LayoutFacadeOp
 
   const toggleSidebar = (): void => {
     const view = frames.project()
-    const sidebar = column(options.sidebarTypeId)
+    const sidebar = navigationColumn()
     if (view.viewport === undefined || sidebar === undefined) return
 
     if (!isCollapsed(sidebar.width)) sidebarPreference = sidebar.width

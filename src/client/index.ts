@@ -100,17 +100,21 @@ export function apply(ctx: {
       }
     }
     frames.registerType({ id: CONVERSATION_TYPE, title: () => 'Conversation' })
-    // The navigation column can never be brought back by this layer once it is
-    // gone — the thing that would ask for it is the occupant that went away with
-    // it — so the close gesture stops at it.
+    // The navigation column stays put when a frame beside it closes: without
+    // `grows: false` the rail would take a proportional share of the freed space
+    // and the centre would not get all of it.
     //
-    // It also stays put when a frame beside it closes. Without that the rail
-    // would take a proportional share of the freed space and the centre would not
-    // get all of it.
+    // It used to refuse the close gesture as well, and that was wrong twice over.
+    // A policy is a property of the *type*, so it refused every frame displaying
+    // a navigation panel — including one the user made from the picker, which
+    // then could not be closed at all. And its reason ("nothing can bring this
+    // column back") stopped being true once this layer's seeding became a
+    // reconciliation: standing the column up again is exactly what the code below
+    // does, which is the same arrangement the right column already has.
     frames.registerType({
       id: SIDEBAR_TYPE,
       title: () => 'Navigation',
-      policy: { grows: false, closable: false },
+      policy: { grows: false },
     })
     // The right column is closable, and has to be: closing its frame is exactly
     // what "hidden" means here. A close that arrives from anywhere else is
@@ -141,19 +145,30 @@ export function apply(ctx: {
     // A panel whose plugin went away must not leave the centre drawing nothing.
     const offPanels = ctx.slots.subscribe('main', () => { panels.sync() })
 
+    // The pane this layer stands the navigation column up in. Kept because "which
+    // pane shows a navigation panel" and "which pane is the navigation column" are
+    // different questions: the picker offers the content, so a user can put a
+    // navigation panel in a frame of their own, and that frame is none of this
+    // layer's business — the same distinction the right column learned first.
+    let navPane: string | undefined
+
     // The right column is two things, and `./rightbar.ts` owns both: a seat that
     // outlives every frame, and the frame that reserves its width while the
-    // occupant reports that it is shown.
+    // occupant reports that it is shown. It is handed the navigation column's
+    // pane for the same reason: the rail's width is room taken out of the window,
+    // and the room was taken from *that* frame.
     const column = createRightColumn(frames, {
       rightbarTypeId: RIGHTBAR_TYPE,
       sidebarTypeId: SIDEBAR_TYPE,
       conversationTypeId: CONVERSATION_TYPE,
+      navPane: () => navPane,
     })
 
     const facade = createLayoutFacade(frames, {
       sidebarTypeId: SIDEBAR_TYPE,
       panels,
       column,
+      navPane: () => navPane,
     })
 
     const dropPanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: panels } })
@@ -173,32 +188,48 @@ export function apply(ctx: {
     // The core default is still one frame. A profile that mounts no compatibility
     // layer gets exactly that, which is what "one frame with nothing configured"
     // has always meant.
-    const seedColumns = (): void => {
-      const centre = frames.project().docked
-        .find((pane) => pane.content?.typeId === CONVERSATION_TYPE)
-      const brought = frames.openContent(SIDEBAR_TYPE, { place: 'left' })
-      if (!brought.ok) return
+    /**
+     * Stand the navigation column up when the shell has none, and remember where.
+     *
+     * A reconciliation rather than a one-shot seeding, because the column is now
+     * closable: `C-x C-d` on it is accepted (the close gesture is the user's, and
+     * a frame they can see must not refuse it) and this is what puts the column
+     * back. It asks for the column only when **nothing anywhere** is displaying
+     * the navigation content, which keeps the promise the shell makes — the
+     * navigation panel is always on screen in some frame — without standing a
+     * second copy of it beside the one a user made.
+     * @returns nothing; the tree is changed through the service.
+     */
+    const reconcileNavigation = (): void => {
       const view = frames.project()
       if (view.viewport === undefined) return
-      const navigation = view.docked.find((pane) => pane.content?.typeId === SIDEBAR_TYPE)
-      if (navigation !== undefined) frames.resizePane(navigation.id, SIDEBAR_DEFAULT / view.viewport.width)
+      // Its own frame is standing: nothing to do, whoever else shows the panel.
+      if (navPane !== undefined && view.docked.some((pane) => pane.id === navPane)) return
+      navPane = undefined
+      if (view.docked.some((pane) => pane.content?.typeId === SIDEBAR_TYPE)) return
+      // The shell opens onto its content, so the frame the column goes beside is
+      // the centre rather than whatever is focused.
+      const centre = view.docked.find((pane) => pane.content?.typeId === CONVERSATION_TYPE)
+      const before = new Set(view.docked.map((pane) => pane.id))
+      // Not measured yet — the renderer may not have reported, or a preset may be
+      // mid-load. The next change tries again.
+      if (!frames.openContent(SIDEBAR_TYPE, { place: 'left' }).ok) return
+      const after = frames.project()
+      const width = after.viewport?.width
+      const rail = after.docked.find((pane) => !before.has(pane.id))
+      if (rail === undefined || width === undefined) return
+      navPane = rail.id
+      frames.resizePane(rail.id, SIDEBAR_DEFAULT / width)
       // Opening a frame focuses it, which would leave the caret on the navigation
-      // column at boot. The shell opens onto its content, so focus goes back.
+      // column. The shell opens onto its content, so focus goes back.
       if (centre !== undefined) frames.focus(centre.id)
     }
 
-    // Seeding needs the renderer's measurements, and the two plugins mount in an
-    // order this one does not control — so it tries, and keeps trying until the
-    // frame is measured, rather than assuming the renderer got there first.
-    let seeded = false
-    const trySeed = (): void => {
-      if (seeded) return
-      const before = frames.project().docked.length
-      seedColumns()
-      if (frames.project().docked.length > before) seeded = true
-    }
-    trySeed()
-    const offSeed = frames.subscribe(trySeed)
+    // The column is reconciled against the tree, so a close that got through is
+    // repaired by the change that carried it — the same way the right column
+    // treats a close it did not ask for.
+    reconcileNavigation()
+    const offNavigation = frames.subscribe(reconcileNavigation)
     // The right column's seat is hosted on the overlay seat rather than in a
     // frame's body, and that is the whole fix for a column that never appeared:
     // a seat mounted by a body exists only while that frame does, and the frame
@@ -257,7 +288,7 @@ export function apply(ctx: {
 
     return () => {
       offTheme()
-      offSeed()
+      offNavigation()
       presenter.dispose()
       dropBridge()
       offPanels()
