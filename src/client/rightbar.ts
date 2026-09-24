@@ -80,6 +80,18 @@ export interface RightColumnOptions {
    * back to — the rail and nothing else.
    */
   navPane: () => string | undefined
+  /**
+   * The width the panel was last left at, in px, from wherever the shell keeps it.
+   *
+   * `undefined` means it was never dragged, and then the shipped first-open
+   * default applies: 45% of the frame, clamped to what the centre can spare.
+   * Remembering it is what keeps a reload from going back to 45% of a window that
+   * is now much wider — which is how a first-open default turns into "the sidebars
+   * are too wide".
+   */
+  initialPreference?: number | undefined
+  /** Told the width whenever the user changes it, so it can be remembered. */
+  remember?: (width: number) => void
 }
 
 /** What the seat is handed, and how wide its own box is. */
@@ -153,8 +165,15 @@ export function columnShare(wanted: number, measured: number, asked: number): nu
  * @returns the column, already following the tree.
  */
 export function createRightColumn(frames: ColumnFrames, options: RightColumnOptions): RightColumn {
-  /** The width the panel was last left at, in px. Set the first time it is shown. */
-  let preference: number | undefined
+  /**
+   * The width the panel was last left at, in px.
+   *
+   * Seeded from what the shell remembered, so a reload comes back to the width
+   * the user dragged to — the shipped store did the same, which is why its 45%
+   * first-open default was rarely what anyone saw. Set on first show when there is
+   * nothing remembered.
+   */
+  let preference: number | undefined = options.initialPreference
   /** What the occupant last reported: shown at all, and whether it wants a track. */
   let shown = false
   let track = false
@@ -301,9 +320,11 @@ export function createRightColumn(frames: ColumnFrames, options: RightColumnOpti
       if (Math.abs(measured - lastAsked) > 1) {
         // Someone else moved it: a divider drag, a preset, the navigation column
         // taking room back. That is the width now, clamped the way the shipped
-        // `setRightbar` clamped it.
+        // `setRightbar` clamped it — and remembered, so it is the width next time
+        // rather than a fresh 45% of whatever the frame happens to be.
         preference = clampWidth(measured, RIGHTBAR_MIN, Math.max(RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO))
         lastAsked = preference
+        options.remember?.(preference)
       }
     }
     const resizedViewport = lastViewport !== undefined && !sameViewport

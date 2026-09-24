@@ -15,6 +15,11 @@ import assert from 'node:assert/strict'
 
 import { columnShare, createRightColumn, rightbarOwner } from '../src/client/rightbar.ts'
 import type { ColumnFrames } from '../src/client/rightbar.ts'
+import {
+  navWidth, SIDEBAR_COLLAPSED, SIDEBAR_MAX, SIDEBAR_MIN,
+} from '../src/client/columns.ts'
+import { COLUMNS_KEY, readColumnPrefs, writeColumnPrefs } from '../src/client/column-prefs.ts'
+import type { ColumnPrefs } from '../src/client/column-prefs.ts'
 
 /** One pane in the fake tree: a share of the window, and what it shows. */
 interface FakePane {
@@ -149,6 +154,56 @@ test('the share asked for is corrected by what the last ask produced', () => {
   // between the width that came back and the width wanted.
   assert.equal(columnShare(400, 200, 1 / 3), 2 / 3)
   assert.equal(columnShare(400, 0, 0.25), 0.25, 'nothing measured yet: ask as planned')
+})
+
+// ---------------------------------------- the navigation column's width rules
+
+test('the navigation column is a width in pixels, not a share of the frame', () => {
+  // 280px is 280px: the same answer for a small frame and a large one. Sized as a
+  // fraction it would come back 538px wide in a 1920px window, which is what made
+  // the rail look far too wide after maximising a desktop window. (Both frames here
+  // are above the auto-collapse breakpoint; the narrow rule has its own test.)
+  assert.equal(navWidth(1200, 280, false, false), 280)
+  assert.equal(navWidth(1920, 280, false, false), 280)
+  // A drag is clamped into the shipped range.
+  assert.equal(navWidth(1920, 900, false, false), SIDEBAR_MAX)
+  assert.equal(navWidth(1920, 10, false, false), SIDEBAR_MIN)
+})
+
+test('a narrow frame collapses the column, and the user can say otherwise', () => {
+  // The shipped LG breakpoint: below it the column is the 56px rail.
+  assert.equal(navWidth(1023, 280, false, false), SIDEBAR_COLLAPSED)
+  assert.equal(navWidth(1024, 280, false, false), 280, 'the breakpoint itself is not narrow')
+  // A manual expand while narrow is a decision about this frame, not about width.
+  assert.equal(navWidth(900, 280, false, true), 280)
+  // And collapsing in a wide frame is the user's own toggle.
+  assert.equal(navWidth(1400, 280, true, false), SIDEBAR_COLLAPSED)
+  // The narrow decision does not survive leaving the narrow range.
+  assert.equal(navWidth(1400, 280, false, true), 280)
+})
+
+test('the remembered columns survive a reload, and a broken record does not', () => {
+  const store = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value) },
+  }
+  const defaults: ColumnPrefs = { sidebar: 280, collapsed: false, narrowExpanded: false, rightbar: undefined }
+
+  assert.deepEqual(readColumnPrefs(storage, defaults), defaults, 'nothing stored: the shipped defaults')
+  assert.deepEqual(readColumnPrefs(undefined, defaults), defaults, 'no medium at all')
+
+  writeColumnPrefs(storage, { sidebar: 360, collapsed: true, narrowExpanded: true, rightbar: 420 })
+  assert.deepEqual(readColumnPrefs(storage, defaults), {
+    sidebar: 360, collapsed: true, narrowExpanded: true, rightbar: 420,
+  })
+
+  // A narrower record — an older build, or one field lost — loads what it has.
+  store.set(COLUMNS_KEY, JSON.stringify({ sidebar: 300 }))
+  assert.deepEqual(readColumnPrefs(storage, defaults), { ...defaults, sidebar: 300 })
+  // And garbage costs a preference, not the shell.
+  store.set(COLUMNS_KEY, 'not json')
+  assert.deepEqual(readColumnPrefs(storage, defaults), defaults)
 })
 
 test('a mounted seat with no frame standing for it is already eligible', () => {

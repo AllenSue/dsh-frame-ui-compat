@@ -11,8 +11,12 @@
  * edit to `ui-conversation`.
  */
 import { createLayoutFacade } from './facade.ts'
+import { readColumnPrefs, writeColumnPrefs } from './column-prefs.ts'
+import type { ColumnStorage } from './column-prefs.ts'
 import { LegacyRightColumnPane, LegacySidebar } from './columns-body.ts'
-import { SIDEBAR_DEFAULT } from './columns.ts'
+import {
+  navWidth, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT,
+} from './columns.ts'
 import { LegacyOverlay } from './overlay-body.ts'
 import type { LegacyOverlayInjected } from './overlay-body.ts'
 import { createPanels } from './panels.ts'
@@ -22,6 +26,24 @@ import { ThemePresenter } from './theme-presenter.ts'
 
 /** Services this plugin needs before it activates. */
 export const inject = ['slots', 'theme', 'locale', 'frames']
+
+/**
+ * The browser medium, when there is one.
+ *
+ * The same guard the renderer's preset port uses: a non-browser boot of this
+ * bundle has no `localStorage`, and a shell that cannot remember its column
+ * widths is not a shell that fails to start.
+ * @returns the storage, or `undefined` when there is none.
+ */
+function columnStorage(): ColumnStorage | undefined {
+  try {
+    return typeof localStorage === 'undefined' ? undefined : localStorage as ColumnStorage
+  } catch {
+    // Reaching `localStorage` can throw outright when a document is sandboxed
+    // without `allow-same-origin`.
+    return undefined
+  }
+}
 
 /** The frame types the bridge supplies, and the legacy keys they answer to. */
 const CONVERSATION_TYPE = 'legacy.conversation'
@@ -173,18 +195,65 @@ export function apply(ctx: {
     // occupant reports that it is shown. It is handed the navigation column's
     // pane for the same reason: the rail's width is room taken out of the window,
     // and the room was taken from *that* frame.
+    /**
+     * What the shell remembers about its two columns.
+     *
+     * Read at mount and written on every decision, so a width the user chose
+     * survives a reload. The shipped shell kept these in its client store, and
+     * that is why its right column rarely opened at the 45% first-open default:
+     * the preference stayed. Without this, every reload gives a fresh 45% of
+     * whatever the window happens to be — which reads as "the columns are too
+     * wide" rather than as "the preference was forgotten".
+     */
+    const prefs: {
+      sidebar: number
+      collapsed: boolean
+      narrowExpanded: boolean
+      rightbar: number | undefined
+    } = {
+      ...readColumnPrefs(columnStorage(), {
+        sidebar: SIDEBAR_DEFAULT,
+        collapsed: false,
+        narrowExpanded: false,
+        rightbar: undefined,
+      }),
+    }
+    const remember = (): void => { writeColumnPrefs(columnStorage(), prefs) }
+
+    /** How wide the navigation column should be, in px, for this viewport. */
+    const railWidth = (viewport: number): number =>
+      navWidth(viewport, prefs.sidebar, prefs.collapsed, prefs.narrowExpanded)
+
+    /** A pane's width in whole pixels. */
+    const pxOf = (pane: { readonly rect: { readonly width: number } }, viewport: number): number =>
+      Math.round(pane.rect.width * viewport)
+
     const column = createRightColumn(frames, {
       rightbarTypeId: RIGHTBAR_TYPE,
       sidebarTypeId: SIDEBAR_TYPE,
       conversationTypeId: CONVERSATION_TYPE,
       navPane: () => navPane,
+      // Where the width it opens at comes from, and where a width the user
+      // dragged it to goes.
+      initialPreference: prefs.rightbar,
+      remember: (width) => { prefs.rightbar = width; remember() },
     })
 
-    const facade = createLayoutFacade(frames, {
+    const facade = createLayoutFacade({
       sidebarTypeId: SIDEBAR_TYPE,
       panels,
       column,
-      navPane: () => navPane,
+      // The width rules — the auto-collapse breakpoint and the narrow-frame
+      // decision — live with the rest of the column geometry, so the toggle is
+      // resolved here rather than in the facade.
+      toggleSidebar: () => {
+        const width = frames.project().viewport?.width
+        if (width === undefined) return
+        if (width < SIDEBAR_AUTO_COLLAPSE) prefs.narrowExpanded = !prefs.narrowExpanded
+        else prefs.collapsed = !prefs.collapsed
+        remember()
+        reconcileNavigation()
+      },
     })
 
     const dropPanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: panels } })
@@ -205,7 +274,8 @@ export function apply(ctx: {
     // layer gets exactly that, which is what "one frame with nothing configured"
     // has always meant.
     /**
-     * Stand the navigation column up when the shell has none, and remember where.
+     * Stand the navigation column up when the shell has none, and keep it the
+     * width the user last left it at.
      *
      * A reconciliation rather than a one-shot seeding, because the column is now
      * closable: `C-x C-d` on it is accepted (the close gesture is the user's, and
@@ -214,13 +284,27 @@ export function apply(ctx: {
      * the navigation content, which keeps the promise the shell makes — the
      * navigation panel is always on screen in some frame — without standing a
      * second copy of it beside the one a user made.
+     *
+     * The width is applied on every pass, and that is what makes it a *width*
+     * rather than a share: the tree stores a fraction of the viewport, so a rail
+     * sized once from a 1000px window comes back 538px wide in a 1920px one.
+     * Re-asking for the remembered pixels is also what makes the narrow-frame
+     * rule stick (below `SIDEBAR_AUTO_COLLAPSE` the column is the 56px rail
+     * unless the user expanded it there), and it is why a preset's share for this
+     * one column does not survive a load: the width is a preference, the
+     * arrangement is the layout.
      * @returns nothing; the tree is changed through the service.
      */
     const reconcileNavigation = (): void => {
       const view = frames.project()
-      if (view.viewport === undefined) return
-      // Its own frame is standing: nothing to do, whoever else shows the panel.
-      if (navPane !== undefined && view.docked.some((pane) => pane.id === navPane)) return
+      const viewport = view.viewport?.width
+      if (viewport === undefined) return
+      const standing = navPane === undefined ? undefined : view.docked.find((pane) => pane.id === navPane)
+      if (standing !== undefined) {
+        const wanted = railWidth(viewport)
+        if (Math.abs(pxOf(standing, viewport) - wanted) > 1) frames.resizePane(standing.id, wanted / viewport)
+        return
+      }
       navPane = undefined
       if (view.docked.some((pane) => pane.content?.typeId === SIDEBAR_TYPE)) return
       // The shell opens onto its content, so the frame the column goes beside is
@@ -235,7 +319,7 @@ export function apply(ctx: {
       const rail = after.docked.find((pane) => !before.has(pane.id))
       if (rail === undefined || width === undefined) return
       navPane = rail.id
-      frames.resizePane(rail.id, SIDEBAR_DEFAULT / width)
+      frames.resizePane(rail.id, railWidth(width) / width)
       // Opening a frame focuses it, which would leave the caret on the navigation
       // column. The shell opens onto its content, so focus goes back.
       if (centre !== undefined) frames.focus(centre.id)

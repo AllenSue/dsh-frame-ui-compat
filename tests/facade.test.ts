@@ -49,22 +49,23 @@ function harness(registered: readonly string[] = ['conversation', 'files']) {
   const mainSeat = seat(registered)
   const panels = createPanels(mainSeat, CONVERSATION.id)
   // The pane the plugin body stood the rail up in. A test sets it when the shell
-  // has a navigation column of its own; until then the layer has none, and the
-  // toggle falls back to the frame showing a navigation panel.
+  // has a navigation column of its own; until then the layer has none.
   const rail: { id: string | undefined } = { id: undefined }
+  /** Every `toggleSidebar` the facade asked for; resolving it is the layer's job. */
+  const toggles: number[] = []
   const column = createRightColumn(service, {
     rightbarTypeId: RIGHTBAR,
     sidebarTypeId: SIDEBAR,
     conversationTypeId: CONVERSATION.id,
     navPane: () => rail.id,
   })
-  const facade = createLayoutFacade(service, {
+  const facade = createLayoutFacade({
     sidebarTypeId: SIDEBAR,
     panels,
     column,
-    navPane: () => rail.id,
+    toggleSidebar: () => { toggles.push(toggles.length) },
   })
-  return { service, facade, panels, mainSeat, column, rail }
+  return { service, facade, panels, mainSeat, column, rail, toggles }
 }
 
 /** The docked pane holding a type, if the tree has one. */
@@ -186,40 +187,15 @@ test('the geometry reports are carried out on the tree, and the tree alone', () 
   assert.ok(service.project().contents.some((content) => content.id === RIGHTBAR))
 })
 
-test('the sidebar toggle is a no-op while no navigation column is up', () => {
-  const { facade } = harness()
+test('the sidebar toggle is handed to the layer, which owns the width rules', () => {
+  const { facade, toggles } = harness()
 
   assert.doesNotThrow(() => { facade.toggleSidebar() })
-  assert.equal(paneOf(harness().service, SIDEBAR), undefined, 'the harness seeds nothing by itself')
-})
-
-test('the sidebar toggle acts on the rail, not on a frame the user made', () => {
-  const { facade, service, rail } = harness()
-  // A frame of the user's own, showing a navigation panel — the picker offers the
-  // content, so this is reachable. It comes first in the draw order.
-  assert.equal(service.split(undefined, SIDEBAR).ok, true)
-  const mine = paneOf(service, SIDEBAR) as unknown as { id: string }
-  // And the shell has its own rail beside it: the pane the plugin body remembers.
-  assert.equal(service.split(mine.id, SIDEBAR).ok, true)
-  const railPane = service.project().docked
-    .filter((pane) => pane.content?.typeId === SIDEBAR)
-    .find((pane) => pane.id !== mine.id) as unknown as { id: string }
-  rail.id = railPane.id
-  // The projection is a snapshot, so widths are read back after each change.
-  const widthOf = (id: string): number => {
-    const pane = service.project().docked.find((candidate) => candidate.id === id) as unknown as
-      { rect: { width: number } } | undefined
-    return (pane?.rect.width ?? 0) * 1000
-  }
-
-  facade.toggleSidebar()
-
-  assert.ok(
-    Math.abs(widthOf(railPane.id) - SIDEBAR_COLLAPSED) < 1,
-    `the rail collapsed to ${String(widthOf(railPane.id))}px`,
-  )
-  assert.ok(
-    widthOf(mine.id) > SIDEBAR_COLLAPSED + 1,
-    `the user's frame kept its size, it is ${String(widthOf(mine.id))}px`,
-  )
+  // The facade does not resize anything itself any more: whether the column is a
+  // full column or the 56px rail depends on the viewport and on a narrow-frame
+  // decision, and both live with the rest of the geometry in the plugin body. The
+  // *effect* — the rail collapsing to 56px while a frame of the user's keeps its
+  // size — is guarded end to end in `tools/plugin-runtime.test.ts`, where the real
+  // composition is mounted.
+  assert.equal(toggles.length, 1)
 })

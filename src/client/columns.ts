@@ -35,6 +35,15 @@ export const SIDEBAR_COLLAPSED = 56
 /** Below this, the column is drawn as the rail rather than as a full column. */
 export const SIDEBAR_COLLAPSED_MAX = SIDEBAR_COLLAPSED
 
+/**
+ * Viewport width below which the navigation column collapses to its rail.
+ *
+ * The shipped LG breakpoint (`AppFrame.tsx`: `const narrow = viewport < SIDEBAR_AUTO_COLLAPSE`).
+ * A desktop window is routinely narrower than this while a maximised browser is
+ * not, which is why a rail that ignores it looks far too wide there.
+ */
+export const SIDEBAR_AUTO_COLLAPSE = 1024
+
 /** Right column drag clamp floor, in px. */
 export const RIGHTBAR_MIN = 300
 
@@ -72,6 +81,36 @@ export function clampWidth(px: number, min: number, max: number): number {
  */
 export function isCollapsed(width: number): boolean {
   return width <= SIDEBAR_COLLAPSED_MAX
+}
+
+/**
+ * What the navigation column's width should be, in px.
+ *
+ * Ported from the shipped resolution (`AppFrame.tsx`), which is two rules:
+ *
+ * - **the preference is pixels, not a share.** `SIDEBAR_DEFAULT` is 280px and a
+ *   drag clamps it into `[SIDEBAR_MIN, SIDEBAR_MAX]`; a column sized as a
+ *   fraction of the viewport would grow with the window, which is exactly what a
+ *   column with a fixed width must not do;
+ * - **a narrow frame collapses it.** Below `SIDEBAR_AUTO_COLLAPSE` the column is
+ *   the single-column rail unless the user expanded it *while narrow*
+ *   (`stores.ts`'s `narrowExpanded`), which is a decision about this narrow frame
+ *   rather than about the width.
+ * @param viewport - the drawable width in px.
+ * @param preference - the width the user left the column at, in px.
+ * @param collapsed - whether the shell has the column collapsed.
+ * @param narrowExpanded - whether the user expanded it in a narrow frame.
+ * @returns the width in px the column should be given.
+ */
+export function navWidth(
+  viewport: number,
+  preference: number,
+  collapsed: boolean,
+  narrowExpanded: boolean,
+): number {
+  const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
+  const shut = narrow ? !narrowExpanded : collapsed
+  return shut ? SIDEBAR_COLLAPSED : clampWidth(preference, SIDEBAR_MIN, SIDEBAR_MAX)
 }
 
 /**

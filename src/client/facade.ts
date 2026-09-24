@@ -25,9 +25,6 @@
  * The facade is pure over a frame tree and a viewport, so it is testable without
  * a browser.
  */
-import {
-  clampWidth, isCollapsed, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
-} from './columns.ts'
 import type { Panels } from './panels.ts'
 import type { RightColumn } from './rightbar.ts'
 
@@ -58,14 +55,15 @@ export interface LayoutFacadeOptions {
   /** The right column: it owns its own frame, its own width, and its own seat. */
   column: RightColumn
   /**
-   * The pane the plugin body stood the navigation column up in, if it is there.
+   * Collapse or expand the navigation column.
    *
-   * The collapse button belongs to the panel, so it acts on the panel's frame:
-   * the rail this layer made when it is standing, and otherwise the frame that is
-   * showing a navigation panel. That fallback is what keeps the button alive when
-   * the rail was closed and the panel is living in a frame of the user's.
+   * The facade does not decide this any more. Whether the column is drawn as a
+   * full column or as the 56px rail depends on the *viewport*
+   * (`SIDEBAR_AUTO_COLLAPSE`), and on whether the user expanded it while the
+   * frame was narrow — both of which live with the rest of the column geometry
+   * in the plugin body, so there is one owner of the width rather than two.
    */
-  navPane: () => string | undefined
+  toggleSidebar: () => void
 }
 
 /** The panel-navigation and geometry actions `ui-layout` exposed as `ctx.layout`. */
@@ -88,12 +86,12 @@ export interface LayoutFacade {
  * - any accepted selection aborts the navigation signal a caller is holding,
  *   which is how a pending navigation learns it lost;
  * - the sidebar toggle flips the *collapsed* state, so a collapse followed by an
- *   expand comes back to the width the user had chosen rather than to the default.
- * @param frames - the frame tree.
- * @param options - the type ids that play each column.
+ *   expand comes back to the width the user had chosen rather than to the default
+ *   — the plugin body resolves it, because the width rules need the viewport.
+ * @param options - the type ids that play each column, and how to toggle the rail.
  * @returns the facade.
  */
-export function createLayoutFacade(frames: LayoutFrames, options: LayoutFacadeOptions): LayoutFacade {
+export function createLayoutFacade(options: LayoutFacadeOptions): LayoutFacade {
   let navigation: AbortController | undefined
 
   const beginNavigation = (): AbortSignal => {
@@ -111,40 +109,8 @@ export function createLayoutFacade(frames: LayoutFrames, options: LayoutFacadeOp
     beginNavigation()
   }
 
-  /**
-   * The frame showing the navigation panel, and how many pixels wide it is.
-   *
-   * The rail this layer stood up comes first, because "which pane shows a
-   * navigation panel" and "which pane is the navigation column" are different
-   * questions: the picker offers the content, so a frame the user made can be
-   * showing one. Only when the rail is gone does that frame become the answer —
-   * the panel is then wherever the user put it, and its own button has to reach it.
-   * @returns the pane's id and width in px, or undefined when there is no panel.
-   */
-  const navigationColumn = (): { id: string; width: number } | undefined => {
-    const view = frames.project()
-    if (view.viewport === undefined) return undefined
-    const id = options.navPane()
-    const pane = (id === undefined ? undefined : view.docked.find((candidate) => candidate.id === id))
-      ?? view.docked.find((candidate) => candidate.content?.typeId === options.sidebarTypeId)
-    return pane === undefined ? undefined : { id: pane.id, width: pane.rect.width * view.viewport.width }
-  }
-
-  /** The width the sidebar was last left at, so expanding restores the choice. */
-  let sidebarPreference = SIDEBAR_DEFAULT
-
   const toggleSidebar = (): void => {
-    const view = frames.project()
-    const sidebar = navigationColumn()
-    if (view.viewport === undefined || sidebar === undefined) return
-
-    if (!isCollapsed(sidebar.width)) sidebarPreference = sidebar.width
-    const wanted = isCollapsed(sidebar.width)
-      ? clampWidth(sidebarPreference, SIDEBAR_MIN, SIDEBAR_MAX)
-      : SIDEBAR_COLLAPSED
-    // The core is told a share of the parent split; the caller is the only side
-    // that knows the viewport, so it does the division.
-    frames.resizePane(sidebar.id, wanted / view.viewport.width)
+    options.toggleSidebar()
   }
 
   const openRightbar = (track: boolean, _fullscreen: boolean): void => {
